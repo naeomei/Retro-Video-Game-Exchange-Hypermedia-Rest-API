@@ -1,0 +1,560 @@
+openapi: 3.0.0
+info:
+  description: RESTful API for exchanging video games between users
+  version: "1.0.0"
+  title: Video Game Exchange API
+tags:
+  - name: games
+    description: Game exchange operations
+  - name: users
+    description: User management operations
+paths:
+  /games:
+    get:
+      tags:
+        - games
+      summary: Get all games
+      operationId: getAllGames
+      description: Retrieve a list of all games available for exchange
+      responses:
+        '200':
+          description: List of all games
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Game'
+
+  /games/search:
+    get:
+      tags:
+        - games
+      summary: Search for games
+      operationId: searchGames
+      description: Search for games by name, publisher, system, condition, or owner
+      parameters:
+        - name: name
+          in: query
+          description: Name of the game to search for
+          required: false
+          schema:
+            type: string
+        - name: publisher
+          in: query
+          description: Publisher to filter by
+          required: false
+          schema:
+            type: string
+        - name: system
+          in: query
+          description: Gaming system to filter by
+          required: false
+          schema:
+            type: string
+        - name: condition
+          in: query
+          description: Condition to filter by
+          required: false
+          schema:
+            type: string
+            enum: [mint, good, fair, poor]
+        - name: ownerId
+          in: query
+          description: Owner ID to filter by
+          required: false
+          schema:
+            type: integer
+        - name: yearBefore
+          in: query
+          description: Filter games published before this year
+          required: false
+          schema:
+            type: integer
+        - name: yearAfter
+          in: query
+          description: Filter games published after this year
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of games matching search criteria
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid search parameters
+
+  /games:
+    post:
+      tags:
+        - games
+      summary: Add a new game
+      operationId: addGame
+      description: Add a new game to the exchange list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Game'
+      responses:
+        '201':
+          description: Game created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  
+  /games/{gameId}:
+    get:
+      tags:
+        - games
+      summary: Get a specific game
+      operationId: getGameById
+      description: Retrieve details of a specific game by ID
+      parameters:
+        - name: gameId
+          in: path
+          description: ID of the game to retrieve
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Game found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    put:
+      tags:
+        - games
+      summary: Replace all properties of a game
+      operationId: replaceGame
+      description: Completely replace all properties of an existing game
+      parameters:
+        - name: gameId
+          in: path
+          description: ID of the game to replace
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Game'
+      responses:
+        '200':
+          description: Game replaced successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    patch:
+      tags:
+        - games
+      summary: Partially update a game
+      operationId: updateGame
+      description: Update certain properties of a game (partial update)
+      parameters:
+        - name: gameId
+          in: path
+          description: ID of the game to update
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                publisher:
+                  type: string
+                yearPublished:
+                  type: integer
+                system:
+                  type: string
+                condition:
+                  type: string
+                  enum: [mint, good, fair, poor]
+                previousOwners:
+                  type: integer
+      responses:
+        '200':
+          description: Game updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    delete:
+      tags:
+        - games
+      summary: Delete a game
+      operationId: deleteGame
+      description: Remove a game from the exchange list
+      parameters:
+        - name: gameId
+          in: path
+          description: ID of the game to delete
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Game deleted successfully
+        '404':
+          description: Game not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  
+  /users:
+    get:
+      tags:
+        - users
+      summary: Get all users
+      operationId: getAllUsers
+      description: Retrieve a list of all users
+      responses:
+        '200':
+          description: List of all users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    
+    post:
+      tags:
+        - users
+      summary: Create a new user
+      operationId: addUser
+      description: Register a new user in the system
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  
+  /users/{userId}:
+    get:
+      tags:
+        - users
+      summary: Get a specific user
+      operationId: getUserById
+      description: Retrieve details of a specific user by ID
+      parameters:
+        - name: userId
+          in: path
+          description: ID of the user to retrieve
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    put:
+      tags:
+        - users
+      summary: Replace all properties of a user
+      operationId: replaceUser
+      description: Completely replace all properties of an existing user
+      parameters:
+        - name: userId
+          in: path
+          description: ID of the user to replace
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '200':
+          description: User replaced successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    patch:
+      tags:
+        - users
+      summary: Partially update a user
+      operationId: updateUser
+      description: Update certain properties of a user (partial update). Email address cannot be changed.
+      parameters:
+        - name: userId
+          in: path
+          description: ID of the user to update
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                streetAddress:
+                  type: string
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    delete:
+      tags:
+        - users
+      summary: Delete a user
+      operationId: deleteUser
+      description: Remove a user from the system
+      parameters:
+        - name: userId
+          in: path
+          description: ID of the user to delete
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: User deleted successfully
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Game:
+      type: object
+      required:
+        - id
+        - name
+        - publisher
+        - yearPublished
+        - system
+        - condition
+        - ownerId
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Super Mario Bros."
+        publisher:
+          type: string
+          example: "Nintendo"
+        yearPublished:
+          type: integer
+          example: 1985
+        system:
+          type: string
+          example: "NES"
+        condition:
+          type: string
+          enum: [mint, good, fair, poor]
+          example: "good"
+        previousOwners:
+          type: integer
+          description: Number of previous owners
+          example: 2
+        ownerId:
+          type: integer
+          example: 42
+        _links:
+          type: object
+          description: HATEOAS links to related resources
+          properties:
+            self:
+              type: string
+              example: "/games/1"
+            update:
+              type: string
+              example: "/games/1"
+            delete:
+              type: string
+              example: "/games/1"
+            owner:
+              type: string
+              example: "/users/42"
+    
+    User:
+      type: object
+      required:
+        - id
+        - name
+        - email
+        - password
+        - streetAddress
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "gamer@example.com"
+        password:
+          type: string
+          format: password
+          example: "securePassword123"
+        streetAddress:
+          type: string
+          example: "123 Main St, New York, NY 10001"
+        _links:
+          type: object
+          description: HATEOAS links to related resources
+          properties:
+            self:
+              type: string
+              example: "/users/1"
+            update:
+              type: string
+              example: "/users/1"
+            delete:
+              type: string
+              example: "/users/1"
+            games:
+              type: string
+              example: "/games?ownerId=1"
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          description: HTTP status code
+          example: 404
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Game not found"
+        details:
+          type: string
+          description: Additional error details
+          example: "No game exists with ID 999"
+
+servers:
+  # Added by API Auto Mocking Plugin
+  - description: SwaggerHub API Auto Mocking
+    url: https://virtserver.swaggerhub.com/student-d39/VIdeoGameExchangeApi/1.0.0
