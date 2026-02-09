@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Dict
 from enum import Enum
 from datetime import datetime
+from app.models import TradeOfferStatus
 
 
 class Condition(str, Enum):
@@ -84,14 +85,6 @@ class Error(BaseModel):
 
 
 # Trade Offer Schemas
-class TradeOfferStatus(str, Enum):
-    """Enumeration of possible states for a trade offer"""
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-    CANCELLED = "cancelled"
-
-
 class TradeOfferBase(BaseModel):
     """Base fields for a trade offer"""
     message: Optional[str] = None
