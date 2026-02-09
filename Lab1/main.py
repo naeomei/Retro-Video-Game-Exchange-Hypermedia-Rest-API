@@ -4,7 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.database import engine, Base
-from app.routes import users, games
+from app.routes import users, games, trade_offers
 from app.schemas.schemas import Error
 
 Base.metadata.create_all(bind=engine)
@@ -17,6 +17,7 @@ app = FastAPI(
 
 app.include_router(users.router)
 app.include_router(games.router)
+app.include_router(trade_offers.router)
 
 
 @app.get("/", tags=["root"])
@@ -31,6 +32,7 @@ def read_root():
             "users": "/users",
             "games": "/games",
             "games_search": "/games/search",
+            "trade_offers": "/trade-offers",
             "docs": "/docs"
         }
     }
