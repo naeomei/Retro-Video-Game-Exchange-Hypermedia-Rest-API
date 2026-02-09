@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Dict
 from enum import Enum
+from datetime import datetime
 
 
 class Condition(str, Enum):
@@ -80,3 +81,55 @@ class Error(BaseModel):
     code: int
     message: str
     details: Optional[str] = None
+
+
+# Trade Offer Schemas
+class TradeOfferStatus(str, Enum):
+    """Enumeration of possible states for a trade offer"""
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
+class TradeOfferBase(BaseModel):
+    """Base fields for a trade offer"""
+    message: Optional[str] = None
+
+
+class TradeOfferCreate(TradeOfferBase):
+    """
+    Schema for creating a new trade offer.
+
+    The offered_game_id is determined from the authenticated user's owned games.
+    The requester specifies which game they want and who they want to trade with.
+    """
+    requested_game_id: int = Field(..., description="ID of the game the proposer wants to receive")
+    recipient_id: int = Field(..., description="ID of the user who owns the requested game")
+
+
+class TradeOfferUpdate(BaseModel):
+    """
+    Schema for updating a trade offer (responding to an offer).
+
+    Only the recipient can change the status to ACCEPTED or REJECTED.
+    Only the proposer can change the status to CANCELLED (while still pending).
+    """
+    status: TradeOfferStatus
+
+
+class TradeOfferResponse(TradeOfferBase):
+    """Schema for trade offer responses with HATEOAS links"""
+    id: int
+    proposer_id: int
+    recipient_id: int
+    offered_game_id: int
+    requested_game_id: int
+    status: TradeOfferStatus
+    created_at: datetime
+    updated_at: datetime
+    responded_at: Optional[datetime] = None
+    _links: Links
+
+    class Config:
+        from_attributes = True
