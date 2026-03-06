@@ -1,0 +1,62 @@
+# =============================================================================
+# prometheus.yml — Prometheus Scrape Configuration
+# =============================================================================
+# What this file does:
+#   Tells Prometheus which services to collect metrics from and how often.
+#   Each "job" is a named scrape target. Prometheus hits the /metrics endpoint
+#   of each target on the scrape_interval and stores results as time-series data.
+#
+# How scraping works:
+#   Prometheus is pull-based — it reaches out to services on a schedule rather
+#   than services pushing data to it. Each target exposes metrics in Prometheus
+#   text format at a /metrics endpoint.
+#
+# Exporters:
+#   Not every service speaks Prometheus natively. Exporters are sidecar
+#   processes that translate a service's native stats into Prometheus format:
+#     - kafka-exporter:    reads Kafka broker stats  → /metrics on :9308
+#     - postgres-exporter: reads pg_stat_* DB views  → /metrics on :9187
+#     - nginx-exporter:    reads stub_status page    → /metrics on :9113
+# =============================================================================
+
+global:
+  scrape_interval: 15s      # How often to scrape each target
+  evaluation_interval: 15s  # How often to evaluate alerting rules (if configured)
+
+scrape_configs:
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # FastAPI instances expose /metrics via prometheus_fastapi_instrumentator.
+  # Tracks: request count, latency histograms, status code distributions.
+  - job_name: 'retro-games-api'
+    static_configs:
+      - targets:
+          - 'retro-games-api-server-one:8000'
+          - 'retro-games-api-server-two:8000'
+
+  # Email service exposes metrics via prometheus_client.start_http_server(8001).
+  # Tracks: Kafka messages consumed by event type, emails sent, errors.
+  - job_name: 'email-service'
+    static_configs:
+      - targets: ['email-service:8001']
+
+  # nginx-exporter translates NGINX stub_status into Prometheus metrics.
+  # Tracks: active connections, requests/sec, connection states.
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+
+  # kafka-exporter reads internal Kafka topic and partition statistics.
+  # Tracks: messages in/out per second, consumer group lag, partition offsets.
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+
+  # postgres-exporter queries pg_stat_* system views inside the database.
+  # Tracks: active connections, query counts, table sizes, cache hit rates.
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']

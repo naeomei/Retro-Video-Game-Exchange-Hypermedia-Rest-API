@@ -1,3 +1,22 @@
+# =============================================================================
+# schemas/schemas.py — Pydantic Request/Response Schemas
+# =============================================================================
+# What this file does:
+#   Defines the shape of data coming in (requests) and going out (responses)
+#   for every resource: Users, Games, and Trade Offers. Pydantic validates
+#   incoming JSON automatically — if the shape doesn't match, FastAPI returns
+#   a 422 error before the route function even runs.
+#
+# Key decisions:
+#   - Separate Base/Create/Update/Response classes per resource: Base holds
+#     shared fields, Create adds write-only fields (like password), Update makes
+#     fields Optional for PATCH support, Response adds read-only fields (id, links).
+#   - HATEOAS _links on every response: each resource tells the client what
+#     actions are available next, following REST level 3 maturity.
+#   - from_attributes = True (formerly orm_mode): tells Pydantic to read data
+#     from SQLAlchemy model attributes instead of requiring a plain dict.
+# =============================================================================
+
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Dict
 from enum import Enum
@@ -12,7 +31,6 @@ class Condition(str, Enum):
     poor = "poor"
 
 
-# HATEOAS Links
 class Links(BaseModel):
     self: str
     update: Optional[str] = None
@@ -21,7 +39,6 @@ class Links(BaseModel):
     games: Optional[str] = None
 
 
-# User Schemas
 class UserBase(BaseModel):
     name: str
     email: EmailStr
@@ -35,6 +52,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     street_address: Optional[str] = None
+    password: Optional[str] = None
 
 
 class UserResponse(UserBase):
@@ -45,7 +63,6 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
-# Game Schemas
 class GameBase(BaseModel):
     name: str
     publisher: str
@@ -77,42 +94,30 @@ class GameResponse(GameBase):
         from_attributes = True
 
 
-# Error Schema
 class Error(BaseModel):
     code: int
     message: str
     details: Optional[str] = None
 
 
-# Trade Offer Schemas
 class TradeOfferBase(BaseModel):
-    """Base fields for a trade offer"""
     message: Optional[str] = None
 
 
 class TradeOfferCreate(TradeOfferBase):
-    """
-    Schema for creating a new trade offer.
-
-    The offered_game_id is determined from the authenticated user's owned games.
-    The requester specifies which game they want and who they want to trade with.
-    """
+    # The proposer only specifies what they want and who has it.
+    # Which of their own games to offer is auto-selected server-side.
     requested_game_id: int = Field(..., description="ID of the game the proposer wants to receive")
     recipient_id: int = Field(..., description="ID of the user who owns the requested game")
 
 
 class TradeOfferUpdate(BaseModel):
-    """
-    Schema for updating a trade offer (responding to an offer).
-
-    Only the recipient can change the status to ACCEPTED or REJECTED.
-    Only the proposer can change the status to CANCELLED (while still pending).
-    """
+    # Recipients set ACCEPTED or REJECTED. Proposers set CANCELLED.
+    # The route layer enforces who can set which status.
     status: TradeOfferStatus
 
 
 class TradeOfferResponse(TradeOfferBase):
-    """Schema for trade offer responses with HATEOAS links"""
     id: int
     proposer_id: int
     recipient_id: int

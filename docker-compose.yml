@@ -1,0 +1,223 @@
+version: '3.8'
+
+services:
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: retro-games-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # PLAINTEXT = external access from host via localhost:9092
+      # INTERNAL  = container-to-container via kafka:29092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    networks:
+      - retro-games-network
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # First API instance
+  retro-games-api-instance-one:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: retro-games-api-server-one
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=postgresql://retrogames:retrogames@postgres:5432/retrogames
+      - APP_ENV=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    networks:
+      - retro-games-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Second API instance
+  retro-games-api-instance-two:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: retro-games-api-server-two
+    ports:
+      - "8002:8000"
+    environment:
+      - DATABASE_URL=postgresql://retrogames:retrogames@postgres:5432/retrogames
+      - APP_ENV=production
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    networks:
+      - retro-games-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Email service for notification processing
+  email-service:
+    build:
+      context: ./email_service
+      dockerfile: Dockerfile
+    container_name: retro-games-email-service
+    ports:
+      - "8088:8001"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SMTP_HOST=smtp.ethereal.email
+      - SMTP_PORT=587
+      - SMTP_USER=furman.hodkiewicz@ethereal.email
+      - SMTP_PASS=25sKt9RN8NttJH17gR
+      - EMAIL_FROM=furman.hodkiewicz@ethereal.email
+    networks:
+      - retro-games-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # PostgreSQL database — replaces SQLite for proper distributed database support
+  postgres:
+    image: postgres:16-alpine
+    container_name: retro-games-postgres
+    environment:
+      POSTGRES_DB: retrogames
+      POSTGRES_USER: retrogames
+      POSTGRES_PASSWORD: retrogames
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - retro-games-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retrogames -d retrogames"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # NGINX load balancer
+  retro-games-nginx-load-balancer:
+    image: nginx:1.25-alpine
+    container_name: retro-games-nginx-load-balancer
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - retro-games-network
+    depends_on:
+      - retro-games-api-instance-one
+      - retro-games-api-instance-two
+    restart: unless-stopped
+
+  # Kafka exporter - translates Kafka broker stats into Prometheus metrics
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: retro-games-kafka-exporter
+    command: --kafka.server=kafka:29092
+    networks:
+      - retro-games-network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # PostgreSQL exporter - exposes database metrics to Prometheus
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: retro-games-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://retrogames:retrogames@postgres:5432/retrogames?sslmode=disable
+    networks:
+      - retro-games-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # NGINX exporter - reads stub_status and converts to Prometheus metrics
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: retro-games-nginx-exporter
+    command: --nginx.scrape-uri=http://retro-games-nginx-load-balancer/nginx_status
+    networks:
+      - retro-games-network
+    depends_on:
+      - retro-games-nginx-load-balancer
+    restart: unless-stopped
+
+  # Prometheus - scrapes and stores metrics from all services
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: retro-games-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - retro-games-network
+    restart: unless-stopped
+
+  # Grafana - dashboard UI connected to Prometheus
+  grafana:
+    image: grafana/grafana:latest
+    container_name: retro-games-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - retro-games-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+networks:
+  retro-games-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

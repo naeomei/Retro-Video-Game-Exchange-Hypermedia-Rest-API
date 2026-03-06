@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: retro-games-dashboards
+    orgId: 1
+    folder: Retro Games Exchange
+    folderUid: retro-games
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

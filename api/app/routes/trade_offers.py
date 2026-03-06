@@ -1,3 +1,23 @@
+# =============================================================================
+# routes/trade_offers.py — Trade Offer Endpoints
+# =============================================================================
+# What this file does:
+#   Manages the core business logic of the exchange: creating offers, viewing
+#   them, responding (accept/reject), and cancelling. All endpoints require
+#   authentication — users can only see and act on offers they're part of.
+#
+# Key decisions:
+#   - Auth on every route: trade offers are private, not publicly browsable.
+#   - Role-based restrictions: only the recipient can accept/reject, only the
+#     proposer can cancel. Enforced at the route level with explicit checks.
+#   - Kafka events on state changes: email notifications are decoupled from the
+#     API — we publish the event and the email service handles delivery async.
+#   - Offered game auto-selection: picks the proposer's first game. A production
+#     app would let the client specify which of their games to offer.
+#
+# State machine: PENDING → ACCEPTED | REJECTED | CANCELLED (all terminal)
+# =============================================================================
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -9,6 +29,7 @@ from app.models import User, Game, TradeOffer, TradeOfferStatus
 from app.schemas.schemas import TradeOfferCreate, TradeOfferResponse, TradeOfferUpdate
 from app.utils import build_trade_offer_links
 from app.auth import get_current_authenticated_user
+from app.kafka_producer import publish_notification_event
 
 router = APIRouter(prefix="/trade-offers", tags=["trade-offers"])
 
@@ -21,15 +42,7 @@ def get_trade_offers(
     current_user: User = Depends(get_current_authenticated_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieve all trade offers for the authenticated user.
-
-    Returns both offers where the user is the proposer (offers they made)
-    and offers where the user is the recipient (offers they received).
-
-    Can be filtered by status, recipient_id, or proposer_id.
-    """
-    # Build query to get offers where user is either proposer or recipient
+    """Returns all offers where the authenticated user is the proposer or recipient."""
     query = db.query(TradeOffer).filter(
         or_(
             TradeOffer.proposer_id == current_user.id,
@@ -37,7 +50,6 @@ def get_trade_offers(
         )
     )
 
-    # Apply optional filters
     if status_filter:
         query = query.filter(TradeOffer.status == status_filter)
     if recipient_id_filter:
@@ -46,10 +58,8 @@ def get_trade_offers(
         query = query.filter(TradeOffer.proposer_id == proposer_id_filter)
 
     offers = query.order_by(TradeOffer.created_at.desc()).all()
-
     for offer in offers:
         offer._links = build_trade_offer_links(offer.id)
-
     return offers
 
 
@@ -59,18 +69,10 @@ def get_trade_offer(
     current_user: User = Depends(get_current_authenticated_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Retrieve a specific trade offer by ID.
-
-    Only accessible to users who are either the proposer or the recipient.
-    """
+    """Only the proposer or recipient can view a specific offer."""
     offer = db.query(TradeOffer).filter(TradeOffer.id == offer_id).first()
-
     if not offer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Trade offer not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade offer not found")
 
     if current_user.id != offer.proposer_id and current_user.id != offer.recipient_id:
         raise HTTPException(
@@ -89,30 +91,18 @@ def create_trade_offer(
     db: Session = Depends(get_db)
 ):
     """
-    Create a new trade offer.
-
-    The authenticated user (proposer) offers to exchange one of their games
-    for a game owned by another user (recipient).
-
-    Validation rules:
-    - Cannot create an offer for yourself
-    - The offered game must be owned by the authenticated user
-    - The requested game must be owned by the recipient
-    - No duplicate pending offers for the same game pair
+    Create a trade offer. The authenticated user is the proposer.
+    Their first owned game is auto-selected as the offered game.
+    Can't trade with yourself, both games must exist and be owned by the right
+    users, and no duplicate pending offers for the same game pair are allowed.
     """
     requested_game = db.query(Game).filter(Game.id == offer_data.requested_game_id).first()
     if not requested_game:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Requested game not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requested game not found")
 
     recipient = db.query(User).filter(User.id == offer_data.recipient_id).first()
     if not recipient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Recipient user not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient user not found")
 
     if requested_game.owner_id != offer_data.recipient_id:
         raise HTTPException(
@@ -126,9 +116,8 @@ def create_trade_offer(
             detail="Cannot create a trade offer for yourself"
         )
 
-    # Find a game owned by the current user to offer
-    # For this implementation, we'll use the first game owned by the user
-    # In production, the client would specify which game to offer
+    # Auto-select the proposer's first game. In production the client would
+    # specify which of their games to put up for trade.
     users_games = db.query(Game).filter(Game.owner_id == current_user.id).all()
     if not users_games:
         raise HTTPException(
@@ -165,6 +154,22 @@ def create_trade_offer(
     db.commit()
     db.refresh(new_offer)
 
+    publish_notification_event(
+        event_type='trade_offer_created',
+        data={
+            'offer_id': new_offer.id,
+            'offeror_id': new_offer.proposer_id,
+            'offeror_email': current_user.email,
+            'offeror_name': current_user.name,
+            'offeree_id': new_offer.recipient_id,
+            'offeree_email': recipient.email,
+            'offeree_name': recipient.name,
+            'offered_game_name': offered_game.name,
+            'requested_game_name': requested_game.name,
+            'message': new_offer.message or ''
+        }
+    )
+
     new_offer._links = build_trade_offer_links(new_offer.id)
     return new_offer
 
@@ -177,22 +182,12 @@ def respond_to_trade_offer(
     db: Session = Depends(get_db)
 ):
     """
-    Respond to a trade offer (accept or reject).
-
-    Only the recipient of the offer can respond to it.
-    The offer must be in PENDING status to be responded to.
-
-    Valid status transitions:
-    - PENDING → ACCEPTED (recipient accepts)
-    - PENDING → REJECTED (recipient rejects)
+    Accept or reject a pending offer. Only the recipient can respond.
+    Valid transitions: PENDING → ACCEPTED or PENDING → REJECTED.
     """
     offer = db.query(TradeOffer).filter(TradeOffer.id == offer_id).first()
-
     if not offer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Trade offer not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade offer not found")
 
     if current_user.id != offer.recipient_id:
         raise HTTPException(
@@ -214,9 +209,25 @@ def respond_to_trade_offer(
 
     offer.status = update_data.status
     offer.responded_at = datetime.utcnow()
-
     db.commit()
     db.refresh(offer)
+
+    event_type = 'trade_offer_accepted' if update_data.status == TradeOfferStatus.ACCEPTED else 'trade_offer_rejected'
+    publish_notification_event(
+        event_type=event_type,
+        data={
+            'offer_id': offer.id,
+            'offeror_id': offer.proposer_id,
+            'offeror_email': offer.proposer.email,
+            'offeror_name': offer.proposer.name,
+            'offeree_id': offer.recipient_id,
+            'offeree_email': offer.recipient.email,
+            'offeree_name': offer.recipient.name,
+            'offered_game_name': offer.offered_game.name,
+            'requested_game_name': offer.requested_game.name,
+            'responded_at': offer.responded_at.isoformat() + 'Z'
+        }
+    )
 
     offer._links = build_trade_offer_links(offer.id)
     return offer
@@ -228,21 +239,11 @@ def cancel_trade_offer(
     current_user: User = Depends(get_current_authenticated_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Cancel a trade offer.
-
-    Only the proposer (creator) of the offer can cancel it.
-    The offer must be in PENDING status to be cancelled.
-    """
+    """Cancel a pending offer. Only the proposer can cancel."""
     offer = db.query(TradeOffer).filter(TradeOffer.id == offer_id).first()
-
     if not offer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Trade offer not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade offer not found")
 
-    # Authorization: only the proposer can cancel their own offers
     if current_user.id != offer.proposer_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -256,6 +257,5 @@ def cancel_trade_offer(
         )
 
     offer.status = TradeOfferStatus.CANCELLED
-
     db.commit()
     return None

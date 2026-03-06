@@ -1,3 +1,21 @@
+# =============================================================================
+# routes/games.py — Game CRUD + Search Endpoints
+# =============================================================================
+# What this file does:
+#   All /games endpoints: list, search with filters, get by ID, create, full
+#   replace (PUT), partial update (PATCH), and delete. No authentication
+#   required — the game catalog is publicly browsable.
+#
+# Key decisions:
+#   - /search route is declared before /{game_id}: FastAPI matches routes in
+#     order, so /search would be captured as a game_id lookup if it came after
+#     the dynamic route. Explicit ordering prevents this.
+#   - ilike() for text searches: case-insensitive LIKE. Works on both SQLite
+#     (case-insensitive by default) and PostgreSQL (where LIKE is case-sensitive).
+#   - No auth on read endpoints: games are a public listing — anyone can browse
+#     what's available for trade without needing an account.
+# =============================================================================
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -12,7 +30,6 @@ router = APIRouter(prefix="/games", tags=["games"])
 
 @router.get("", response_model=List[GameResponse])
 def get_all_games(db: Session = Depends(get_db)):
-    """Get all games"""
     games = db.query(Game).all()
     for game in games:
         game._links = build_game_links(game.id, game.owner_id)
@@ -30,7 +47,6 @@ def search_games(
     year_after: Optional[int] = Query(None, description="Filter games published after this year"),
     db: Session = Depends(get_db)
 ):
-    """Search for games by various criteria"""
     query = db.query(Game)
 
     if name:
@@ -56,14 +72,9 @@ def search_games(
 
 @router.post("", response_model=GameResponse, status_code=status.HTTP_201_CREATED)
 def create_game(game: GameCreate, db: Session = Depends(get_db)):
-    """Add a new game to the exchange list"""
-    # Verify owner exists
     owner = db.query(User).filter(User.id == game.owner_id).first()
     if not owner:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Owner not found"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Owner not found")
 
     db_game = Game(
         name=game.name,
@@ -84,34 +95,22 @@ def create_game(game: GameCreate, db: Session = Depends(get_db)):
 
 @router.get("/{game_id}", response_model=GameResponse)
 def get_game(game_id: int, db: Session = Depends(get_db)):
-    """Get a specific game by ID"""
     game = db.query(Game).filter(Game.id == game_id).first()
     if not game:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Game not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
     game._links = build_game_links(game.id, game.owner_id)
     return game
 
 
 @router.put("/{game_id}", response_model=GameResponse)
 def replace_game(game_id: int, game: GameCreate, db: Session = Depends(get_db)):
-    """Replace all properties of a game"""
     db_game = db.query(Game).filter(Game.id == game_id).first()
     if not db_game:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Game not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
 
-    # Verify owner exists
     owner = db.query(User).filter(User.id == game.owner_id).first()
     if not owner:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Owner not found"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Owner not found")
 
     db_game.name = game.name
     db_game.publisher = game.publisher
@@ -129,13 +128,9 @@ def replace_game(game_id: int, game: GameCreate, db: Session = Depends(get_db)):
 
 @router.patch("/{game_id}", response_model=GameResponse)
 def update_game(game_id: int, game: GameUpdate, db: Session = Depends(get_db)):
-    """Partially update a game"""
     db_game = db.query(Game).filter(Game.id == game_id).first()
     if not db_game:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Game not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
 
     if game.name is not None:
         db_game.name = game.name
@@ -159,13 +154,9 @@ def update_game(game_id: int, game: GameUpdate, db: Session = Depends(get_db)):
 
 @router.delete("/{game_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_game(game_id: int, db: Session = Depends(get_db)):
-    """Delete a game"""
     db_game = db.query(Game).filter(Game.id == game_id).first()
     if not db_game:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Game not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
     db.delete(db_game)
     db.commit()
     return None

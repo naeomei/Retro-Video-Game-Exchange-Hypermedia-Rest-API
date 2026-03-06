@@ -1,3 +1,24 @@
+# =============================================================================
+# auth.py — HTTP Basic Authentication
+# =============================================================================
+# What this file does:
+#   Provides the authentication layer used by protected endpoints. Reads email
+#   and password from the Authorization header (HTTP Basic Auth), looks up the
+#   user, and verifies the password against the stored bcrypt hash.
+#
+# Key decisions:
+#   - HTTP Basic Auth: simple and stateless — no sessions or JWT tokens to
+#     manage. The client sends credentials on every request in the header.
+#   - bcrypt via passlib: bcrypt is intentionally slow, which makes brute-force
+#     attacks expensive. passlib wraps it with a consistent API and handles
+#     salt generation automatically.
+#   - get_current_authenticated_user as a FastAPI Depends: any route that needs
+#     auth just declares it as a parameter. FastAPI calls it automatically and
+#     injects the resulting User object into the route function.
+#   - Same error message for "user not found" and "wrong password": avoids
+#     leaking whether an email address exists in the system.
+# =============================================================================
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
@@ -9,33 +30,16 @@ from app.models.user import User
 
 http_basic_security = HTTPBasic()
 
+# "deprecated=auto" means if we ever switch hashing algorithms, old hashes get
+# flagged for re-hashing on the user's next successful login automatically.
 password_hashing_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a plain password against a hashed password using bcrypt.
-
-    Args:
-        plain_password: The password provided by the user
-        hashed_password: The bcrypt hash stored in the database
-
-    Returns:
-        True if passwords match, False otherwise
-    """
     return password_hashing_context.verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    """
-    Hash a plain password using bcrypt for secure storage.
-
-    Args:
-        password: The plain text password to hash
-
-    Returns:
-        The bcrypt hashed password
-    """
     return password_hashing_context.hash(password)
 
 
@@ -43,22 +47,6 @@ def get_current_authenticated_user(
     credentials: HTTPBasicCredentials = Depends(http_basic_security),
     database_session: Session = Depends(get_db)
 ) -> User:
-    """
-    Dependency function that extracts and validates user credentials from HTTP Basic Auth.
-
-    This function is used as a FastAPI dependency to protect endpoints.
-    If credentials are invalid, it raises an HTTP 401 exception.
-
-    Args:
-        credentials: The HTTP Basic Auth credentials extracted from the request header
-        database_session: The database session for querying the user
-
-    Returns:
-        The authenticated User object from the database
-
-    Raises:
-        HTTPException: 401 Unauthorized if credentials are invalid
-    """
     user_email = credentials.username
     user_password = credentials.password
 

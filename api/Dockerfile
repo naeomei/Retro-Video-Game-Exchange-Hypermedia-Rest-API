@@ -1,5 +1,5 @@
 #setbase image, new build stage, use this python image(slim), built on d-linix
-FROM python:3.13-slim
+FROM python:3.12-slim
 #save space and time by not writing bytecode and unbuffered output, + logs appear asap 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
